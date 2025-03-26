@@ -1,0 +1,17 @@
+langchain>=0.3.21
+langchain-openai>=0.3.11
+langchain-community>=0.3.20
+langchain-core>=0.3.49
+langgraph>=0.3.20
+openai>=1.68.2
+pygithub>=2.6.1
+python-dotenv>=1.1.0
+pydantic>=2.10.6
+radon>=6.0.1
+vulture>=2.14
+pyright>=1.1.398
+esprima>=4.0.1
+jedi>=0.19.2
+pylint>=3.3.6
+astroid>=3.0.1
+pyyaml>=6.0.1

@@ -1,0 +1,79 @@
+# Dead Code Agent Configuration
+
+# GitHub Integration Settings
+github:
+  auto_create_pr: true
+  pr_title_template: "refactor: Remove dead code identified by AI analysis"
+  pr_description_template: |
+    This PR removes dead code identified through automated analysis.
+    
+    ## Details
+    - {total_files} files modified
+    - {removed_lines} lines removed
+    - {analysis_summary}
+    
+    ## Verification
+    Please review the changes carefully before merging.
+  require_approval_before_pr: true
+  commit_message_template: "refactor: Remove dead code in {filename}"
+
+# Analysis Settings
+analysis:
+  languages:
+    python:
+      enabled: true
+      min_confidence: 0.8
+      ignore_patterns:
+        - "tests/**"
+        - "**/__init__.py"
+      tools:
+        - "vulture"
+        - "pyright"
+        - "jedi"
+        - "pylint"
+    javascript:
+      enabled: true
+      min_confidence: 0.8
+      ignore_patterns:
+        - "node_modules/**"
+        - "**/*.test.js"
+        - "**/*.spec.js"
+      tools:
+        - "eslint"
+        - "esprima"
+    typescript:
+      enabled: true
+      min_confidence: 0.8
+      ignore_patterns:
+        - "node_modules/**"
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+      tools:
+        - "eslint"
+        - "typescript-eslint"
+    java:
+      enabled: true
+      min_confidence: 0.9
+      ignore_patterns:
+        - "**/test/**"
+    cpp:
+      enabled: true
+      min_confidence: 0.9
+      ignore_patterns:
+        - "**/test/**"
+        - "**/tests/**"
+
+# Reporting Settings
+reporting:
+  detail_level: "high"  # Options: low, medium, high
+  include_context: true
+  context_lines: 5
+  group_by: "file"  # Options: file, type, confidence
+
+# Performance Settings
+performance:
+  parallel_processing: true
+  max_workers: 4
+  timeout_seconds: 300
+  max_file_size_kb: 1000
+  batch_size: 50
