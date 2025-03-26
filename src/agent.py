@@ -28,6 +28,7 @@ class AnalysisResult:
     success: bool
     pr_url: Optional[str] = None
     error: Optional[str] = None
+    modified_files: List[str] = field(default_factory=list)
     
     @dataclass
     class Stats:
@@ -68,7 +69,7 @@ class DeadCodeAgent:
         """
         self.config = config
         self.llm = ChatOpenAI(
-            model_name=os.getenv("OPENAI_MODEL", "gpt-4"),
+            model_name=os.getenv("OPENAI_MODEL", "gpt-4o"),
             temperature=0.1,
         )
         self.github = GitHubIntegration(
@@ -95,6 +96,9 @@ class DeadCodeAgent:
             try:
                 if not state.get("local_path"):
                     # Clone the repository to a temporary directory
+                    if not state.get("repo"):
+                        raise ValueError("Either repo or local_path must be provided")
+                        
                     repo_path = clone_repository(
                         repo=state["repo"],
                         branch=state["branch"]
@@ -106,6 +110,39 @@ class DeadCodeAgent:
                         "temp_dir_created": True
                     }
                 else:
+                    local_path = state["local_path"]
+                    # Verify the local path exists and is a directory
+                    if not os.path.isdir(local_path):
+                        raise ValueError(f"Local path {local_path} is not a valid directory")
+                        
+                    # If repo is not provided, try to infer it from the git remote
+                    if not state.get("repo"):
+                        try:
+                            # Try to get the repo name from git remote
+                            import subprocess
+                            result = subprocess.run(
+                                ["git", "remote", "get-url", "origin"],
+                                cwd=local_path,
+                                capture_output=True,
+                                text=True,
+                                check=False
+                            )
+                            
+                            if result.returncode == 0:
+                                remote_url = result.stdout.strip()
+                                # Extract repo name from URL (e.g., https://github.com/username/repo.git or git@github.com:username/repo.git)
+                                if "github.com" in remote_url:
+                                    if remote_url.startswith("https://"):
+                                        repo_parts = remote_url.split("github.com/")[1].split(".git")[0]
+                                    else:  # SSH format
+                                        repo_parts = remote_url.split("github.com:")[1].split(".git")[0]
+                                        
+                                    logger.info(f"Inferred repo name from git remote: {repo_parts}")
+                                    state = {**state, "repo": repo_parts}
+                        except Exception as e:
+                            logger.warning(f"Could not infer repo name from git remote: {e}")
+                            # Continue without repo name, which means we'll operate in local-only mode
+                            
                     logger.info(f"Using existing repository at {state['local_path']}")
                     
                     return {
@@ -175,16 +212,15 @@ class DeadCodeAgent:
                                     # Log details about each finding
                                     logger.info(f"Found {len(findings)} instances of dead code in {relative_path}")
                                     for idx, finding in enumerate(findings):
-                                        # Get line information
-                                        line_info = f"lines {finding.get('start_line', finding.get('line_number', 'unknown'))}"
-                                        if finding.get('end_line'):
-                                            line_info += f"-{finding.get('end_line')}"
-                                            
-                                        # Log the finding details
-                                        logger.info(f"  Dead code #{idx+1}: {finding.get('type', 'unknown')} '{finding.get('name', 'unnamed')}' at {line_info}")
-                                        if finding.get('reason'):
+                                        # Handle both line_number and start_line formats
+                                        line_number = finding.get("line_number")
+                                        if line_number is None:
+                                            line_number = finding.get("start_line", 0)
+                                        
+                                        logger.info(f"  Dead code #{idx+1}: {finding.get('type', 'unknown')} '{finding.get('name', 'unnamed')}' at line {line_number}")
+                                        if finding.get("reason"):
                                             logger.info(f"    Reason: {finding.get('reason')}")
-                                        if finding.get('code_context'):
+                                        if finding.get("code_context"):
                                             # Limit context to first 100 chars to avoid huge logs
                                             context = finding.get('code_context', '')[:100]
                                             if len(finding.get('code_context', '')) > 100:
@@ -251,6 +287,9 @@ class DeadCodeAgent:
                             # Keep the original path if relpath fails
                             pass
                     
+                    # Normalize the path to avoid issues with relative paths
+                    file_path = os.path.normpath(file_path)
+                    
                     if file_path not in findings_by_file:
                         findings_by_file[file_path] = []
                     findings_by_file[file_path].append(finding)
@@ -262,6 +301,8 @@ class DeadCodeAgent:
                     try:
                         # Ensure we have the absolute path for reading the file
                         abs_file_path = os.path.join(repo_path, file_path)
+                        abs_file_path = os.path.normpath(abs_file_path)
+                        
                         if not os.path.exists(abs_file_path):
                             logger.warning(f"File not found: {abs_file_path}")
                             continue
@@ -321,27 +362,44 @@ class DeadCodeAgent:
                 repo_path = state["local_path"]
                 changes = state["changes_to_make"]
                 
+                # Track modified files for reporting
+                modified_files = []
+                
                 for change in changes:
                     file_path = os.path.join(repo_path, change["file_path"])
                     with open(file_path, "w") as f:
                         f.write(change["new_content"])
+                    modified_files.append(change["file_path"])
                 
-                # Create a PR
-                pr_url = self.github.create_pull_request(
-                    repo=state["repo"],
-                    branch=state["branch"],
-                    title="Remove Dead Code",
-                    body=generate_report(state["dead_code_findings"], state["stats"]),
-                    local_path=repo_path
-                )
-                
-                logger.info(f"Created PR: {pr_url}")
-                
-                return {
-                    **state,
-                    "pr_created": True,
-                    "pr_url": pr_url
-                }
+                # Check if we have a GitHub repo to create a PR
+                if state.get("repo"):
+                    # Create a PR
+                    pr_url = self.github.create_pull_request(
+                        repo=state["repo"],
+                        branch=state["branch"],
+                        title="Remove Dead Code",
+                        body=generate_report(state["dead_code_findings"], state["stats"]),
+                        local_path=repo_path
+                    )
+                    
+                    logger.info(f"Created PR: {pr_url}")
+                    
+                    return {
+                        **state,
+                        "pr_created": True,
+                        "pr_url": pr_url
+                    }
+                else:
+                    # Local-only mode - just apply changes without creating a PR
+                    logger.info(f"Local-only mode: Applied changes to {len(modified_files)} files")
+                    for file in modified_files:
+                        logger.info(f"  - Modified: {file}")
+                    
+                    return {
+                        **state,
+                        "pr_created": False,
+                        "modified_files": modified_files
+                    }
             except Exception as e:
                 logger.error(f"Failed to create pull request: {str(e)}")
                 
@@ -473,7 +531,8 @@ class DeadCodeAgent:
         result = AnalysisResult(
             success=success,
             pr_url=state.get("pr_url"),
-            error=error
+            error=error,
+            modified_files=state.get("modified_files", [])
         )
         
         result.stats.files_analyzed = state.get("stats", {}).get("files_analyzed", 0)

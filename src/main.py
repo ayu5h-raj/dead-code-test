@@ -20,11 +20,18 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="AI agent for dead code detection and PR generation"
     )
-    parser.add_argument(
+    
+    # Create a group for repo-related arguments
+    repo_group = parser.add_mutually_exclusive_group(required=True)
+    repo_group.add_argument(
         "--repo", 
-        required=True, 
         help="GitHub repository in format 'username/repository'"
     )
+    repo_group.add_argument(
+        "--local-path", 
+        help="Path to local repository (if already cloned)"
+    )
+    
     parser.add_argument(
         "--branch", 
         default="main", 
@@ -36,10 +43,6 @@ def parse_arguments():
         help="Path to configuration file (default: config.yaml)"
     )
     parser.add_argument(
-        "--local-path", 
-        help="Path to local repository (if already cloned)"
-    )
-    parser.add_argument(
         "--dry-run", 
         action="store_true", 
         help="Analyze without creating a PR"
@@ -49,6 +52,7 @@ def parse_arguments():
         action="store_true", 
         help="Enable verbose logging"
     )
+    
     return parser.parse_args()
 
 def main():
@@ -90,9 +94,9 @@ def main():
     try:
         agent = DeadCodeAgent(config)
         result = agent.run(
-            repo=args.repo,
+            repo=getattr(args, 'repo', None),
             branch=args.branch,
-            local_path=args.local_path,
+            local_path=getattr(args, 'local_path', None),
             dry_run=args.dry_run
         )
         
@@ -100,6 +104,10 @@ def main():
             logger.info(f"Analysis completed successfully")
             if result.pr_url and not args.dry_run:
                 logger.info(f"Pull request created: {result.pr_url}")
+            elif result.modified_files and not args.dry_run:
+                logger.info(f"Applied changes locally to {len(result.modified_files)} files")
+                for file in result.modified_files:
+                    logger.info(f"  - Modified: {file}")
             else:
                 logger.info("No pull request was created (dry run mode)")
             
